@@ -75,6 +75,10 @@
         flex-wrap: wrap;
         margin-bottom: 6px;
       }
+      .top {
+        flex-wrap: nowrap;
+        align-items: center;
+      }
       button {
         font: inherit;
         color: var(--fg);
@@ -90,27 +94,32 @@
         color: var(--onfg);
         border-color: var(--acc);
       }
-      .wave {
-        flex: 1;
-        min-width: 56px;
-      }
-      #waves {
-        display: flex;
-        gap: 6px;
-        flex: 1;
-        flex-wrap: wrap;
-      }
+      #scaleBtn,
       #gear {
         width: 44px;
         padding: 0;
         font-size: 20px;
         flex: none;
       }
-      #settings {
+      #scaleLabel {
+        flex: 1;
+        text-align: center;
+        font-size: 13px;
+        color: var(--mut);
+      }
+      .wave {
+        flex: 1;
+        min-width: 70px;
+      }
+      .seg {
+        flex: 1;
+      }
+      .panel {
         position: fixed;
         top: calc(env(safe-area-inset-top, 0px) + 62px);
-        right: 12px;
         width: min(320px, calc(100vw - 24px));
+        max-height: calc(100vh - 90px);
+        overflow: auto;
         background: var(--card);
         border: 1px solid var(--line);
         border-radius: 16px;
@@ -119,26 +128,58 @@
         display: none;
         box-shadow: 0 8px 28px rgba(0, 0, 0, 0.25);
       }
-      #settings.open {
+      .panel.open {
         display: block;
       }
-      #settings h3 {
+      #scalePanel {
+        left: 12px;
+      }
+      #settings {
+        right: 12px;
+      }
+      .panel h3 {
         margin: 0 0 10px;
         font-size: 14px;
       }
-      #settings label {
+      .panel label {
         display: block;
         font-size: 13px;
         color: var(--mut);
-        margin: 4px 0 6px;
+        margin: 6px 0;
+      }
+      .panel button {
+        min-height: 40px;
+        padding: 6px;
+        background: var(--bg);
+      }
+      .panel button.sel {
+        background: var(--acc);
+      }
+      .g3,
+      .g4 {
+        display: grid;
+        gap: 6px;
+      }
+      .g3 {
+        grid-template-columns: repeat(3, 1fr);
+      }
+      .g4 {
+        grid-template-columns: repeat(4, 1fr);
+      }
+      .aRow {
+        display: grid;
+        grid-template-columns: 48px 1fr 48px;
+        gap: 6px;
+        align-items: center;
+        margin-bottom: 6px;
+      }
+      #aVal {
+        text-align: center;
+        font-weight: 600;
       }
       #sens {
         width: 100%;
-        margin: 0 0 12px;
-        min-height: 32px;
-      }
-      .seg {
-        flex: 1;
+        margin: 0 0 10px;
       }
       #status {
         font-size: 12px;
@@ -172,6 +213,7 @@
         justify-content: center;
         flex-direction: column;
         gap: 2px;
+        padding: 6px;
       }
       #notes.list .note {
         flex-direction: row;
@@ -180,9 +222,10 @@
         padding: 0 18px;
       }
       .note small {
-        font-size: 11px;
+        font-size: 10px;
         font-weight: 400;
         opacity: 0.65;
+        text-align: center;
       }
       .note.on {
         background: var(--on);
@@ -204,7 +247,7 @@
         border: 3px solid var(--acc);
         background: rgba(47, 111, 237, 0.12);
         pointer-events: none;
-        z-index: 50;
+        z-index: 70;
         display: none;
         transition: background 0.1s;
       }
@@ -216,14 +259,12 @@
   </head>
   <body>
     <header>
-      <div class="row">
-        <div id="waves"></div>
+      <div class="row top">
+        <button id="scaleBtn" aria-label="Scale">🎼</button>
+        <div id="scaleLabel"></div>
         <button id="gear" aria-label="Settings">⚙️</button>
       </div>
-      <div class="row">
-        <button class="seg" id="tEdo">12-EDO</button>
-        <button class="seg" id="tJi">Just</button>
-      </div>
+      <div class="row" id="waves"></div>
       <div class="row">
         <button class="seg" id="track">Start head tracking</button>
         <button class="seg" id="recenter">Recenter</button>
@@ -235,21 +276,38 @@
       <div id="dbg"></div>
     </header>
     <main><div id="notes" class="grid"></div></main>
-    <div id="settings">
+
+    <div id="scalePanel" class="panel">
+      <h3>Scale</h3>
+      <label>Tuning</label>
+      <div class="g3" id="tunBtns"></div>
+      <label>Reference A (Hz)</label>
+      <div class="aRow">
+        <button id="aDown">−1</button>
+        <div id="aVal">440</div>
+        <button id="aUp">+1</button>
+      </div>
+      <div class="g4">
+        <button data-a="415">415</button><button data-a="432">432</button
+        ><button data-a="440">440</button><button data-a="442">442</button>
+      </div>
+      <label>Root note</label>
+      <div class="g4" id="rootBtns"></div>
+    </div>
+
+    <div id="settings" class="panel">
       <h3>Settings</h3>
       <label for="sens"
         >Cursor sensitivity: <span id="sensVal">1.00×</span></label
       >
       <input type="range" id="sens" min="0.5" max="2.5" step="0.05" value="1" />
       <label>Note layout</label>
-      <div class="row">
-        <button class="seg" id="vGrid">Grid</button
-        ><button class="seg" id="vList">List</button>
+      <div class="g3" style="grid-template-columns: 1fr 1fr">
+        <button id="vGrid">Grid</button><button id="vList">List</button>
       </div>
       <label>Reverse head direction</label>
-      <div class="row">
-        <button class="seg" id="flipX">Flip L/R</button
-        ><button class="seg" id="flipY">Flip U/D</button>
+      <div class="g3" style="grid-template-columns: 1fr 1fr">
+        <button id="flipX">Flip L/R</button><button id="flipY">Flip U/D</button>
       </div>
     </div>
     <div id="cursor"></div>
@@ -284,20 +342,37 @@
         9 / 5,
         15 / 8,
       ];
-      const C4 = 261.6256;
+      const TUN = {
+        e12: { n: 12, name: "12-EDO" },
+        ji: { n: 12, name: "Just" },
+        e17: { n: 17, name: "17-EDO" },
+        e19: { n: 19, name: "19-EDO" },
+        e24: { n: 24, name: "24-EDO" },
+        e31: { n: 31, name: "31-EDO" },
+      };
       const ADSR = { a: 0.03, d: 0.12, s: 0.6, r: 0.3, peak: 0.22 };
       let wave = "sine",
-        tuning = "edo",
+        tun = "e12",
+        refA = 440,
+        rootIdx = 0,
         ctx = null,
         master = null;
       const voices = new Map();
       const $ = (id) => document.getElementById(id);
       const status = (t) => ($("status").textContent = t);
 
-      /* Audio */
-      function freq(i) {
-        return tuning === "edo" ? C4 * Math.pow(2, i / 12) : C4 * JI[i];
+      /* Tuning: root is the note in the octave C4..B4 tuned from reference A4 (12-EDO anchor) */
+      function rootFreq() {
+        return refA * Math.pow(2, (rootIdx - 9) / 12);
       }
+      function cents(k) {
+        return tun === "ji" ? 1200 * Math.log2(JI[k]) : (k * 1200) / TUN[tun].n;
+      }
+      function freq(k) {
+        return rootFreq() * Math.pow(2, cents(k) / 1200);
+      }
+
+      /* Audio */
       function ensureAudio() {
         if (!ctx) {
           ctx = new (window.AudioContext || window.webkitAudioContext)();
@@ -364,45 +439,94 @@
         $("waves").appendChild(b);
       });
       document.querySelector('[data-wave="sine"]').classList.add("sel");
+
       function setView(v) {
         $("notes").className = v;
         $("vGrid").classList.toggle("sel", v === "grid");
         $("vList").classList.toggle("sel", v === "list");
       }
-      function setTuning(t) {
-        tuning = t;
-        $("tEdo").classList.toggle("sel", t === "edo");
-        $("tJi").classList.toggle("sel", t === "ji");
-        voices.forEach((v, i) =>
-          v.o.frequency.setTargetAtTime(freq(i), ctx.currentTime, 0.02),
-        );
-        renderNotes();
-      }
       bind($("vGrid"), () => setView("grid"));
       bind($("vList"), () => setView("list"));
-      bind($("tEdo"), () => setTuning("edo"));
-      bind($("tJi"), () => setTuning("ji"));
+
       function renderNotes() {
         const box = $("notes");
         box.innerHTML = "";
-        NAMES.forEach((n, i) => {
+        for (let i = 0; i < TUN[tun].n; i++) {
+          const c = cents(i),
+            s = Math.round(c / 100),
+            off = c - s * 100; // name = nearest 12-EDO note; small text shows the offset
+          const dev =
+            Math.abs(off) < 0.5
+              ? ""
+              : ` · ${off > 0 ? "+" : "−"}${Math.abs(Math.round(off))}¢`;
           const b = document.createElement("button");
           b.className = "note" + (voices.has(i) ? " on" : "");
           b.dataset.note = i;
-          b.innerHTML = `<span>${n}</span><small>${freq(i).toFixed(1)} Hz</small>`;
+          b.innerHTML = `<span>${NAMES[(rootIdx + s) % 12]}</span><small>${freq(i).toFixed(1)} Hz${dev}</small>`;
           bind(b, () => toggle(i));
           box.appendChild(b);
-        });
+        }
       }
+      function refresh() {
+        // call after tuning, root or reference A changes
+        const n = TUN[tun].n;
+        [...voices.keys()].forEach((i) => {
+          if (i >= n) stopNote(i);
+          else
+            voices
+              .get(i)
+              .o.frequency.setTargetAtTime(freq(i), ctx.currentTime, 0.02);
+        });
+        document
+          .querySelectorAll("[data-tun]")
+          .forEach((b) => b.classList.toggle("sel", b.dataset.tun === tun));
+        document
+          .querySelectorAll("[data-root]")
+          .forEach((b) =>
+            b.classList.toggle("sel", +b.dataset.root === rootIdx),
+          );
+        $("aVal").textContent = refA;
+        $("scaleLabel").textContent =
+          `${NAMES[rootIdx]} · ${TUN[tun].name} · A=${refA}`;
+        renderNotes();
+      }
+      Object.entries(TUN).forEach(([k, v]) => {
+        const b = document.createElement("button");
+        b.dataset.tun = k;
+        b.textContent = v.name;
+        bind(b, () => {
+          tun = k;
+          refresh();
+        });
+        $("tunBtns").appendChild(b);
+      });
+      NAMES.forEach((n, i) => {
+        const b = document.createElement("button");
+        b.dataset.root = i;
+        b.textContent = n;
+        bind(b, () => {
+          rootIdx = i;
+          refresh();
+        });
+        $("rootBtns").appendChild(b);
+      });
+      const setA = (v) => {
+        refA = Math.max(400, Math.min(480, v));
+        refresh();
+      };
+      bind($("aDown"), () => setA(refA - 1));
+      bind($("aUp"), () => setA(refA + 1));
+      document
+        .querySelectorAll("[data-a]")
+        .forEach((b) => bind(b, () => setA(+b.dataset.a)));
       setView("grid");
-      setTuning("edo");
+      refresh();
 
       /* Head steering + mouth selection */
       const cur = $("cursor");
       let sens = 1; // cursor sensitivity multiplier (settings slider)
       let gx = innerWidth / 2,
         gy = innerHeight / 2,
-        hist = [],
         tracking = false,
         hover = null,
         lastT = 0;
@@ -562,16 +686,23 @@
         flipY = -flipY;
       });
 
-      /* Settings panel */
-      const panel = $("settings");
-      bind($("gear"), () => panel.classList.toggle("open"));
+      /* Panels */
+      const panels = [$("scalePanel"), $("settings")],
+        toggles = [$("scaleBtn"), $("gear")];
+      function togglePanel(p) {
+        panels.forEach((x) => {
+          if (x !== p) x.classList.remove("open");
+        });
+        p.classList.toggle("open");
+      }
+      bind($("scaleBtn"), () => togglePanel($("scalePanel")));
+      bind($("gear"), () => togglePanel($("settings")));
       document.addEventListener("click", (e) => {
         if (
-          panel.classList.contains("open") &&
-          !panel.contains(e.target) &&
-          !$("gear").contains(e.target)
+          !panels.some((p) => p.contains(e.target)) &&
+          !toggles.some((t) => t.contains(e.target))
         )
-          panel.classList.remove("open");
+          panels.forEach((p) => p.classList.remove("open"));
       });
       $("sens").addEventListener("input", (e) => {
         sens = parseFloat(e.target.value);
