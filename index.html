@@ -249,6 +249,11 @@
         background: rgba(232, 89, 12, 0.45);
         border-color: var(--on);
       }
+      /* WebGazer injects a camera preview and overlays at the top-left; keep them invisible and unclickable so they never block the notes */
+      [id^="webgazer"] {
+        opacity: 0 !important;
+        pointer-events: none !important;
+      }
     </style>
   </head>
   <body>
