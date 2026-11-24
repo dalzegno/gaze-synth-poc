@@ -6,7 +6,7 @@
       name="viewport"
       content="width=device-width, initial-scale=1, viewport-fit=cover"
     />
-    <title>Gaze Synth</title>
+    <title>Head Synth</title>
     <style>
       :root {
         --bg: #f6f5f1;
@@ -75,9 +75,6 @@
         flex-wrap: wrap;
         margin-bottom: 6px;
       }
-      .row:last-child {
-        margin-bottom: 0;
-      }
       button {
         font: inherit;
         color: var(--fg);
@@ -104,6 +101,11 @@
         font-size: 12px;
         color: var(--mut);
         padding: 2px 2px 0;
+      }
+      #dbg {
+        font-size: 11px;
+        color: var(--mut);
+        padding: 2px;
       }
       main {
         padding: 12px;
@@ -163,43 +165,9 @@
         display: none;
         transition: background 0.1s;
       }
-      #cursor.closing {
+      #cursor.active {
         background: rgba(232, 89, 12, 0.45);
         border-color: var(--on);
-      }
-      #cal {
-        position: fixed;
-        inset: 0;
-        background: var(--bg);
-        z-index: 40;
-        display: none;
-      }
-      #cal p {
-        position: absolute;
-        left: 0;
-        right: 0;
-        top: calc(env(safe-area-inset-top, 0px) + 30%);
-        text-align: center;
-        color: var(--mut);
-        padding: 0 24px;
-        margin: 0;
-      }
-      .dot {
-        position: absolute;
-        width: 44px;
-        height: 44px;
-        margin: -22px 0 0 -22px;
-        border-radius: 50%;
-        background: var(--acc);
-        color: var(--onfg);
-        font-weight: 700;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        opacity: 1;
-      }
-      .dot.done {
-        opacity: 0.15;
       }
     </style>
   </head>
@@ -213,31 +181,19 @@
         <button class="seg" id="tJi">Just</button>
       </div>
       <div class="row">
-        <button class="seg" id="eye">👁 Start eye tracking</button
-        ><button class="seg" id="mode">Mode: Drift</button
-        ><button class="seg" id="recenter">Recenter</button>
-      </div>
-      <div class="row">
-        <button class="seg" id="calBlink">Calibrate blink</button
-        ><button class="seg" id="flipX">Head: flip L/R</button
-        ><button class="seg" id="flipY">Head: flip U/D</button>
+        <button class="seg" id="track">Start head tracking</button>
+        <button class="seg" id="recenter">Recenter</button>
+        <button class="seg" id="flipX">Flip L/R</button>
+        <button class="seg" id="flipY">Flip U/D</button>
       </div>
       <div id="status">
-        Tap notes to play. Start eye tracking to select by blinking (hold ~0.4
-        s).
+        Tap notes to play. Start head tracking to steer with your head and
+        select by opening your mouth.
       </div>
-      <div
-        id="dbg"
-        style="font-size: 11px; color: var(--mut); padding: 2px"
-      ></div>
+      <div id="dbg"></div>
     </header>
     <main><div id="notes" class="grid"></div></main>
     <div id="cursor"></div>
-    <div id="cal">
-      <p id="calmsg">
-        Look at each dot and tap it 3 times. Keep your head fairly still.
-      </p>
-    </div>
 
     <script src="https://cdn.jsdelivr.net/npm/webgazer@3.4.0/dist/webgazer.js"></script>
     <script>
@@ -279,6 +235,7 @@
       const $ = (id) => document.getElementById(id);
       const status = (t) => ($("status").textContent = t);
 
+      /* Audio */
       function freq(i) {
         return tuning === "edo" ? C4 * Math.pow(2, i / 12) : C4 * JI[i];
       }
@@ -327,7 +284,7 @@
           .classList.toggle("on", voices.has(i));
       }
 
-      /* UI build */
+      /* UI */
       const acts = new WeakMap();
       function bind(el, fn) {
         acts.set(el, fn);
@@ -381,35 +338,26 @@
       setView("grid");
       setTuning("edo");
 
-      /* Gaze + blink */
+      /* Head steering + mouth selection */
       const cur = $("cursor");
       let gx = innerWidth / 2,
         gy = innerHeight / 2,
         hist = [],
         tracking = false,
-        baseEAR = 0.3,
-        closedAt = null,
-        fired = false,
-        hover = null;
-      let rx = innerWidth / 2,
-        ry = innerHeight / 2,
-        nx = rx,
-        ny = ry,
-        mode = "drift",
-        lastT = 0,
-        squint = false;
+        hover = null,
+        lastT = 0;
       let hx = 0,
         hy = 0,
         nhx = 0,
         nhy = 0,
         flipX = -1,
-        flipY = 1; // head pose (smoothed) and neutral pose
-      let BLINK_MS = 400;
-      const MAX_MS = 2000;
-      let bL = null,
-        bR = null; // per-eye "open" baselines (used until blink calibration is done)
-      let lastE = [0, 0],
-        blinkCal = null;
+        flipY = 1; // smoothed head pose, neutral pose, direction flips
+      let mb = null,
+        openAt = null,
+        fired = false,
+        opening = false; // mouth baseline and state
+      const HOLD_MS = 300,
+        OPEN_DELTA = 0.12; // mouth must open this much past its closed baseline
 
       function targetAt(x, y) {
         const el = document.elementFromPoint(x, y);
@@ -423,18 +371,6 @@
           hover && hover.classList.add("gazed");
         }
       }
-      /* Drift mode: gaze offset from a neutral point acts like a joystick that moves the cursor.
-   Direct mode: cursor sits where you look (lightly smoothed).
-   Head mode: head turn/tilt steers the cursor. */
-      function onGaze(d) {
-        if (!d || closedAt !== null || squint) return;
-        rx += (d.x - rx) * 0.08;
-        ry += (d.y - ry) * 0.08; // heavy smoothing of raw gaze
-        if (mode === "direct") {
-          gx += (d.x - gx) * 0.2;
-          gy += (d.y - gy) * 0.2;
-        }
-      }
       function axisSpeed(v) {
         const a = Math.abs(v),
           dz = 0.15;
@@ -445,208 +381,92 @@
       function step(now) {
         const dt = Math.min(0.05, (now - lastT) / 1000 || 0);
         lastT = now;
-        if (mode === "head" && closedAt === null && !squint) {
-          // head turn/tilt steers the cursor
+        if (!opening && openAt === null) {
+          // cursor holds still while the mouth is opening
           gx += axisSpeed(((hx - nhx) / 0.2) * flipX) * dt;
-          gy += axisSpeed(((hy - nhy) / 0.12) * flipY) * dt;
-        }
-        if (mode === "drift" && closedAt === null && !squint) {
-          const dx = rx - nx,
-            dy = ry - ny,
-            m = Math.hypot(dx, dy),
-            s = Math.min(innerWidth, innerHeight);
-          const dz = s * 0.1,
-            full = s * 0.45; // dead zone and full-speed distance
-          if (m > dz) {
-            const k = Math.min(1, (m - dz) / (full - dz)),
-              sp = k * k * 700 + k * 60;
-            gx += (dx / m) * sp * dt;
-            gy += (dy / m) * sp * dt;
-          }
+          gy += axisSpeed(((hy - nhy) / 0.18) * flipY) * dt;
         }
         gx = Math.max(0, Math.min(innerWidth, gx));
         gy = Math.max(0, Math.min(innerHeight, gy));
-        hist.push({ t: now, x: gx, y: gy });
-        while (hist.length && now - hist[0].t > 800) hist.shift();
         cur.style.transform = `translate(${gx}px,${gy}px)`;
         setHover(gx, gy);
       }
       function recenter() {
-        status(
-          mode === "head"
-            ? "Face the screen straight on and hold still…"
-            : "Look at the middle of the screen…",
-        );
+        status("Face the screen straight on and hold still…");
         setTimeout(() => {
-          nx = rx;
-          ny = ry;
           nhx = hx;
           nhy = hy;
           status(
-            mode === "head"
-              ? "Turn/tilt your head to steer the cursor. Close your eyes ~0.3 s to select. Use the flip buttons if a direction is reversed."
-              : mode === "drift"
-                ? "Look left/right/up/down to steer the cursor. Close your eyes ~0.4 s to select."
-                : "Cursor follows your gaze. Close your eyes ~0.4 s to select.",
+            "Turn/tilt your head to steer. Open your mouth for 0.3 s to select. Use Flip if a direction is reversed.",
           );
         }, 2000);
       }
       function dist(a, b) {
         return Math.hypot(a[0] - b[0], a[1] - b[1]);
       }
-      function ears(p) {
-        // average three upper/lower lid pairs per eye (less noisy), divided by eye width
-        const v = (a) =>
-          a.reduce((s, [i, j]) => s + dist(p[i], p[j]), 0) / a.length;
-        return [
-          v([
-            [160, 144],
-            [159, 145],
-            [158, 153],
-          ]) / dist(p[33], p[133]),
-          v([
-            [387, 373],
-            [386, 374],
-            [385, 380],
-          ]) / dist(p[362], p[263]),
-        ];
-      }
       function loop() {
         if (!tracking) return;
         step(performance.now());
         try {
           const p = webgazer.getTracker().getPositions();
-          if (!p || p.length <= 380)
+          if (!p || p.length <= 380) {
             $("dbg").textContent =
               "No face landmarks (" + (p ? p.length : 0) + ")";
-          if (p && p.length > 380) {
-            const [eL, eR] = ears(p),
-              now = performance.now();
-            {
-              const wd = dist(p[33], p[263]),
-                mx = (p[33][0] + p[263][0]) / 2,
-                my = (p[33][1] + p[263][1]) / 2;
-              const yaw = (p[1][0] - mx) / wd,
-                pit = (p[1][1] - my) / Math.max(1, p[152][1] - my);
-              hx += (yaw - hx) * 0.2;
-              hy += (pit - hy) * 0.2;
-            }
-            lastE = [eL, eR];
-            let closed;
-            if (blinkCal) {
-              // calibrated: 0% = your open value, 100% = your closed value, per eye
-              const c = (o, k, e) =>
-                Math.max(0, Math.min(1.2, (o - e) / (o - k)));
-              const sL = c(blinkCal.oL, blinkCal.cL, eL),
-                sR = c(blinkCal.oR, blinkCal.cR, eR),
-                s = Math.max(sL, sR);
-              squint = s > 0.3;
-              closed = s > 0.5;
-              $("dbg").textContent =
-                `closed: L ${(sL * 100) | 0}%  R ${(sR * 100) | 0}%  (selects above 50%)  raw ${eL.toFixed(3)} / ${eR.toFixed(3)}`;
-            } else {
-              if (bL === null) {
-                bL = eL;
-                bR = eR;
-              }
-              bL = eL > bL ? bL + (eL - bL) * 0.05 : bL - (bL - eL) * 0.003; // open baseline: rises fast, falls slowly
-              bR = eR > bR ? bR + (eR - bR) * 0.05 : bR - (bR - eR) * 0.003;
-              const rL = eL / bL,
-                rR = eR / bR,
-                r = Math.min(rL, rR);
-              squint = r < 0.8;
-              closed = r < 0.6;
-              $("dbg").textContent =
-                `eye open: L ${(rL * 100) | 0}%  R ${(rR * 100) | 0}%  (not calibrated: tap Calibrate blink)`;
-            }
-            if (closed && closedAt === null) {
-              closedAt = now;
+          } else {
+            const now = performance.now();
+            // head pose: nose position relative to the eye line (chin is not used, since it moves with the mouth)
+            const wd = dist(p[33], p[263]),
+              mx = (p[33][0] + p[263][0]) / 2,
+              my = (p[33][1] + p[263][1]) / 2;
+            const yaw = (p[1][0] - mx) / wd,
+              pit = (p[1][1] - my) / Math.max(1, my - p[10][1]);
+            hx += (yaw - hx) * 0.2;
+            hy += (pit - hy) * 0.2;
+            // mouth opening: inner-lip gap divided by mouth width
+            const mar = dist(p[13], p[14]) / dist(p[78], p[308]);
+            if (mb === null) mb = mar;
+            if (mar < mb + 0.08) mb += (mar - mb) * 0.05; // closed-mouth baseline adapts automatically
+            const d = mar - mb;
+            opening = d > 0.05;
+            const open = d > OPEN_DELTA;
+            $("dbg").textContent =
+              `mouth: ${d.toFixed(2)} (selects above ${OPEN_DELTA})`;
+            cur.classList.toggle("active", open);
+            if (open && openAt === null) {
+              openAt = now;
               fired = false;
             }
-            if (closed && closedAt !== null) {
-              const held = now - closedAt;
-              cur.classList.add("closing");
-              if (!fired && held >= BLINK_MS && held <= MAX_MS) {
-                fired = true;
-                // use cursor position from just before the eyes closed
-                const ref = hist.filter((h) => h.t < closedAt - 100).pop() ||
-                  hist[0] || { x: gx, y: gy };
-                const t = targetAt(ref.x, ref.y);
-                if (t && acts.get(t)) {
-                  acts.get(t)();
-                  if (navigator.vibrate) navigator.vibrate(20);
-                }
+            if (open && !fired && now - openAt >= HOLD_MS) {
+              fired = true;
+              const t = targetAt(gx, gy);
+              if (t && acts.get(t)) {
+                acts.get(t)();
+                if (navigator.vibrate) navigator.vibrate(20);
               }
             }
-            if (!closed) {
-              closedAt = null;
-              cur.classList.remove("closing");
-            }
+            if (!open) openAt = null;
           }
         } catch (err) {}
         requestAnimationFrame(loop);
       }
 
-      /* Calibration */
-      function calibrate() {
-        return new Promise((res) => {
-          const cal = $("cal");
-          cal.style.display = "block";
-          cal.querySelectorAll(".dot").forEach((d) => d.remove());
-          const pts = [
-            [10, 12],
-            [50, 12],
-            [90, 12],
-            [10, 50],
-            [50, 50],
-            [90, 50],
-            [10, 88],
-            [50, 88],
-            [90, 88],
-          ];
-          let left = pts.length;
-          pts.forEach(([x, y]) => {
-            let n = 3;
-            const d = document.createElement("div");
-            d.className = "dot";
-            d.textContent = n;
-            d.style.left = x + "%";
-            d.style.top = y + "%";
-            d.addEventListener("click", () => {
-              n--;
-              d.textContent = n;
-              if (n <= 0) {
-                d.classList.add("done");
-                d.style.pointerEvents = "none";
-                if (--left === 0) {
-                  cal.style.display = "none";
-                  res();
-                }
-              }
-            });
-            cal.appendChild(d);
-          });
-        });
-      }
-
-      bind($("eye"), async () => {
+      bind($("track"), async () => {
         ensureAudio();
         if (tracking) {
           tracking = false;
           webgazer.pause();
           cur.style.display = "none";
-          $("eye").textContent = "👁 Start eye tracking";
-          $("eye").classList.remove("sel");
-          status("Eye tracking off.");
+          $("track").textContent = "Start head tracking";
+          $("track").classList.remove("sel");
+          status("Head tracking off.");
           return;
         }
         if (typeof webgazer === "undefined") {
-          status("Eye-tracking library failed to load. Touch still works.");
+          status("Face-tracking library failed to load. Touch still works.");
           return;
         }
         status("Starting camera…");
         try {
-          webgazer.setRegression("ridge").setGazeListener(onGaze);
           await webgazer.begin();
           [
             "showVideoPreview",
@@ -658,17 +478,10 @@
               webgazer[f](false);
             } catch (e) {}
           });
-          try {
-            webgazer.applyKalmanFilter(true);
-          } catch (e) {}
-          if (mode !== "head") {
-            await calibrate();
-            calibrated = true;
-          }
           tracking = true;
           cur.style.display = "block";
-          $("eye").textContent = "👁 Eye tracking on (tap to stop)";
-          $("eye").classList.add("sel");
+          $("track").textContent = "Head tracking on (tap to stop)";
+          $("track").classList.add("sel");
           recenter();
           loop();
         } catch (err) {
@@ -682,84 +495,6 @@
       bind($("recenter"), () => {
         if (tracking) recenter();
       });
-      const MODES = ["drift", "direct", "head"],
-        LABEL = { drift: "Drift", direct: "Direct", head: "Head" };
-      let calibrated = false;
-      bind($("mode"), async () => {
-        mode = MODES[(MODES.indexOf(mode) + 1) % 3];
-        $("mode").textContent = "Mode: " + LABEL[mode];
-        BLINK_MS = mode === "head" ? 300 : 400;
-        if (tracking) {
-          if (mode !== "head" && !calibrated) {
-            await calibrate();
-            calibrated = true;
-          }
-          recenter();
-        }
-      });
-
-      /* Blink calibration: measure each eye open, then closed (one wink per eye) */
-      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-      const med = (a) => {
-        a = [...a].sort((x, y) => x - y);
-        return a[a.length >> 1];
-      };
-      async function sampleEars(ms) {
-        const L = [],
-          R = [],
-          t0 = performance.now();
-        while (performance.now() - t0 < ms) {
-          L.push(lastE[0]);
-          R.push(lastE[1]);
-          await sleep(30);
-        }
-        return [med(L), med(R)];
-      }
-      async function calibrateBlink() {
-        if (!tracking) {
-          status("Start eye tracking first.");
-          return;
-        }
-        const cal = $("cal"),
-          msg = $("calmsg"),
-          orig = msg.textContent,
-          say = (t) => (msg.textContent = t);
-        cal.querySelectorAll(".dot").forEach((d) => d.remove());
-        cal.style.display = "block";
-        try {
-          say("Eyes wide open. Look at the screen…");
-          await sleep(1500);
-          const [oL, oR] = await sampleEars(1500);
-          say("Now WINK one eye: close it fully and hold…");
-          await sleep(1800);
-          const a = await sampleEars(1500);
-          say("Open both eyes…");
-          await sleep(1200);
-          say("Now WINK the OTHER eye: close it fully and hold…");
-          await sleep(1800);
-          const b = await sampleEars(1500);
-          const eyeA = (oL - a[0]) / oL > (oR - a[1]) / oR ? 0 : 1,
-            eyeB = (oL - b[0]) / oL > (oR - b[1]) / oR ? 0 : 1;
-          if (eyeA === eyeB)
-            throw new Error("both winks looked like the same eye, try again");
-          const cL = eyeA === 0 ? a[0] : b[0],
-            cR = eyeA === 1 ? a[1] : b[1];
-          blinkCal = { oL, cL, oR, cR };
-          const dl = Math.round(((oL - cL) / oL) * 100),
-            dr = Math.round(((oR - cR) / oR) * 100);
-          status(
-            `Blink calibrated (closing changes the signal by L ${dl}%, R ${dr}%). Wink or blink to select.` +
-              (Math.min(dl, dr) < 8
-                ? " Signal is weak; try more light and a closer, straighter face."
-                : ""),
-          );
-        } catch (err) {
-          status("Blink calibration failed: " + err.message);
-        }
-        cal.style.display = "none";
-        msg.textContent = orig;
-      }
-      bind($("calBlink"), calibrateBlink);
       bind($("flipX"), () => {
         flipX = -flipX;
       });
