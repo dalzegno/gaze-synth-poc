@@ -1,209 +1,602 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Gaze Synth</title>
-<style>
-:root{--bg:#f6f5f1;--fg:#1d1d1b;--mut:#6b6a64;--card:#fff;--line:#d9d7cf;--acc:#2f6fed;--on:#e8590c;--onfg:#fff;
-box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#151514;--fg:#f0eee8;--mut:#9a988f;--card:#222220;--line:#3a3935;--acc:#6b9bff;--on:#ff8a3d;--onfg:#151514}}
-:root[data-theme="dark"]{--bg:#151514;--fg:#f0eee8;--mut:#9a988f;--card:#222220;--line:#3a3935;--acc:#6b9bff;--on:#ff8a3d;--onfg:#151514}
-*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
-html,body{margin:0;background:var(--bg);color:var(--fg);font-family:system-ui,-apple-system,"Segoe UI",sans-serif;user-select:none;-webkit-user-select:none;touch-action:manipulation}
-header{position:sticky;top:env(safe-area-inset-top,0px);background:var(--bg);padding:10px 12px;border-bottom:1px solid var(--line);z-index:5}
-.row{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:6px}
-.row:last-child{margin-bottom:0}
-button{font:inherit;color:var(--fg);background:var(--card);border:1px solid var(--line);border-radius:12px;padding:10px 12px;min-height:44px;cursor:pointer}
-button.sel{background:var(--acc);color:var(--onfg);border-color:var(--acc)}
-.wave{flex:1;min-width:70px}
-.seg{flex:1}
-#status{font-size:12px;color:var(--mut);padding:2px 2px 0}
-main{padding:12px}
-#notes.grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}
-#notes.list{display:flex;flex-direction:column;gap:8px}
-.note{font-size:22px;font-weight:600;min-height:84px;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:2px}
-#notes.list .note{flex-direction:row;justify-content:space-between;min-height:60px;padding:0 18px}
-.note small{font-size:11px;font-weight:400;opacity:.65}
-.note.on{background:var(--on);color:var(--onfg);border-color:var(--on)}
-.gazed{outline:3px solid var(--acc);outline-offset:2px}
-#cursor{position:fixed;left:0;top:0;width:44px;height:44px;margin:-22px 0 0 -22px;border-radius:50%;border:3px solid var(--acc);background:rgba(47,111,237,.12);pointer-events:none;z-index:50;display:none;transition:background .1s}
-#cursor.closing{background:rgba(232,89,12,.45);border-color:var(--on)}
-#cal{position:fixed;inset:0;background:var(--bg);z-index:40;display:none}
-#cal p{position:absolute;left:0;right:0;top:calc(env(safe-area-inset-top,0px) + 30%);text-align:center;color:var(--mut);padding:0 24px;margin:0}
-.dot{position:absolute;width:44px;height:44px;margin:-22px 0 0 -22px;border-radius:50%;background:var(--acc);color:var(--onfg);font-weight:700;display:flex;align-items:center;justify-content:center;opacity:1}
-.dot.done{opacity:.15}
-</style>
-</head>
-<body>
-<header>
-  <div class="row" id="waves"></div>
-  <div class="row">
-    <button class="seg" id="vGrid">Grid</button>
-    <button class="seg" id="vList">List</button>
-    <button class="seg" id="tEdo">12-EDO</button>
-    <button class="seg" id="tJi">Just</button>
-  </div>
-  <div class="row"><button class="seg" id="eye">👁 Start eye tracking</button></div>
-  <div id="status">Tap notes to play. Start eye tracking to select by blinking (hold ~0.4 s).</div>
-</header>
-<main><div id="notes" class="grid"></div></main>
-<div id="cursor"></div>
-<div id="cal"><p id="calmsg">Look at each dot and tap it 3 times. Keep your head fairly still.</p></div>
-
-<script src="https://cdn.jsdelivr.net/npm/webgazer@3.4.0/dist/webgazer.js"></script>
-<script>
-const NAMES=["C","C♯","D","D♯","E","F","F♯","G","G♯","A","A♯","B"];
-const JI=[1,16/15,9/8,6/5,5/4,4/3,45/32,3/2,8/5,5/3,9/5,15/8];
-const C4=261.6256;
-const ADSR={a:0.03,d:0.12,s:0.6,r:0.3,peak:0.22};
-let wave="sine",tuning="edo",ctx=null,master=null;
-const voices=new Map();
-const $=id=>document.getElementById(id);
-const status=t=>$("status").textContent=t;
-
-function freq(i){return tuning==="edo"?C4*Math.pow(2,i/12):C4*JI[i]}
-function ensureAudio(){
-  if(!ctx){ctx=new (window.AudioContext||window.webkitAudioContext)();master=ctx.createGain();master.gain.value=0.9;master.connect(ctx.destination)}
-  if(ctx.state!=="running")ctx.resume();
-}
-function startNote(i){
-  ensureAudio();
-  const t=ctx.currentTime,o=ctx.createOscillator(),g=ctx.createGain();
-  o.type=wave;o.frequency.value=freq(i);
-  g.gain.setValueAtTime(0.0001,t);
-  g.gain.linearRampToValueAtTime(ADSR.peak,t+ADSR.a);
-  g.gain.setTargetAtTime(ADSR.peak*ADSR.s,t+ADSR.a,ADSR.d/3);
-  o.connect(g);g.connect(master);o.start(t);
-  voices.set(i,{o,g});
-}
-function stopNote(i){
-  const v=voices.get(i);if(!v)return;
-  const t=ctx.currentTime;
-  try{v.g.gain.cancelAndHoldAtTime(t)}catch(e){v.g.gain.cancelScheduledValues(t);v.g.gain.setValueAtTime(v.g.gain.value,t)}
-  v.g.gain.setTargetAtTime(0,t,ADSR.r/3);
-  v.o.stop(t+ADSR.r+0.15);
-  voices.delete(i);
-}
-function toggle(i){
-  voices.has(i)?stopNote(i):startNote(i);
-  document.querySelector(`[data-note="${i}"]`).classList.toggle("on",voices.has(i));
-}
-
-/* UI build */
-const acts=new WeakMap();
-function bind(el,fn){acts.set(el,fn);el.addEventListener("click",fn)}
-["sine","square","triangle","sawtooth"].forEach(w=>{
-  const b=document.createElement("button");b.className="wave";b.dataset.wave=w;b.textContent=w[0].toUpperCase()+w.slice(1);
-  bind(b,()=>{wave=w;document.querySelectorAll(".wave").forEach(x=>x.classList.toggle("sel",x===b));voices.forEach(v=>v.o.type=w)});
-  $("waves").appendChild(b);
-});
-document.querySelector('[data-wave="sine"]').classList.add("sel");
-function setView(v){$("notes").className=v;$("vGrid").classList.toggle("sel",v==="grid");$("vList").classList.toggle("sel",v==="list")}
-function setTuning(t){tuning=t;$("tEdo").classList.toggle("sel",t==="edo");$("tJi").classList.toggle("sel",t==="ji");
-  voices.forEach((v,i)=>v.o.frequency.setTargetAtTime(freq(i),ctx.currentTime,0.02));renderNotes()}
-bind($("vGrid"),()=>setView("grid"));bind($("vList"),()=>setView("list"));
-bind($("tEdo"),()=>setTuning("edo"));bind($("tJi"),()=>setTuning("ji"));
-function renderNotes(){
-  const box=$("notes");box.innerHTML="";
-  NAMES.forEach((n,i)=>{
-    const b=document.createElement("button");b.className="note"+(voices.has(i)?" on":"");b.dataset.note=i;
-    b.innerHTML=`<span>${n}</span><small>${freq(i).toFixed(1)} Hz</small>`;
-    bind(b,()=>toggle(i));box.appendChild(b);
-  });
-}
-setView("grid");setTuning("edo");
-
-/* Gaze + blink */
-const cur=$("cursor");
-let gx=innerWidth/2,gy=innerHeight/2,hist=[],tracking=false,baseEAR=0.3,closedAt=null,fired=false,hover=null;
-const BLINK_MS=400,MAX_MS=2000;
-
-function targetAt(x,y){
-  const el=document.elementFromPoint(x,y);
-  return el&&el.closest("button");
-}
-function setHover(x,y){
-  const t=targetAt(x,y);
-  if(t!==hover){hover&&hover.classList.remove("gazed");hover=t;hover&&hover.classList.add("gazed")}
-}
-function onGaze(d){
-  if(!d||closedAt!==null)return;
-  gx+=(d.x-gx)*0.3;gy+=(d.y-gy)*0.3;
-  gx=Math.max(0,Math.min(innerWidth,gx));gy=Math.max(0,Math.min(innerHeight,gy));
-  const now=performance.now();hist.push({t:now,x:gx,y:gy});
-  while(hist.length&&now-hist[0].t>800)hist.shift();
-  cur.style.transform=`translate(${gx}px,${gy}px)`;
-  setHover(gx,gy);
-}
-function dist(a,b){return Math.hypot(a[0]-b[0],a[1]-b[1])}
-function ear(p){
-  // MediaPipe/TF facemesh landmarks: left eye 33,133,159,145; right eye 362,263,386,374
-  const l=dist(p[159],p[145])/dist(p[33],p[133]);
-  const r=dist(p[386],p[374])/dist(p[362],p[263]);
-  return (l+r)/2;
-}
-function loop(){
-  if(!tracking)return;
-  try{
-    const p=webgazer.getTracker().getPositions();
-    if(p&&p.length>380){
-      const e=ear(p),now=performance.now();
-      if(e>baseEAR*0.75)baseEAR+= (e-baseEAR)*0.02; // adapt baseline while open
-      const closed=e<baseEAR*0.6;
-      if(closed&&closedAt===null){closedAt=now;fired=false}
-      if(closed&&closedAt!==null){
-        const held=now-closedAt;
-        cur.classList.add("closing");
-        if(!fired&&held>=BLINK_MS&&held<=MAX_MS){
-          fired=true;
-          // use gaze from just before the eyes closed
-          const ref=hist.filter(h=>h.t<closedAt-100).pop()||hist[0]||{x:gx,y:gy};
-          const t=targetAt(ref.x,ref.y);
-          if(t&&acts.get(t)){acts.get(t)();if(navigator.vibrate)navigator.vibrate(20)}
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover"
+    />
+    <title>Gaze Synth</title>
+    <style>
+      :root {
+        --bg: #f6f5f1;
+        --fg: #1d1d1b;
+        --mut: #6b6a64;
+        --card: #fff;
+        --line: #d9d7cf;
+        --acc: #2f6fed;
+        --on: #e8590c;
+        --onfg: #fff;
+        box-sizing: border-box;
+        padding-top: env(safe-area-inset-top, 0px);
+        padding-bottom: env(safe-area-inset-bottom, 0px);
+      }
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme="light"]) {
+          --bg: #151514;
+          --fg: #f0eee8;
+          --mut: #9a988f;
+          --card: #222220;
+          --line: #3a3935;
+          --acc: #6b9bff;
+          --on: #ff8a3d;
+          --onfg: #151514;
         }
       }
-      if(!closed){closedAt=null;cur.classList.remove("closing")}
-    }
-  }catch(err){}
-  requestAnimationFrame(loop);
-}
+      :root[data-theme="dark"] {
+        --bg: #151514;
+        --fg: #f0eee8;
+        --mut: #9a988f;
+        --card: #222220;
+        --line: #3a3935;
+        --acc: #6b9bff;
+        --on: #ff8a3d;
+        --onfg: #151514;
+      }
+      * {
+        box-sizing: border-box;
+        -webkit-tap-highlight-color: transparent;
+      }
+      html,
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font-family:
+          system-ui,
+          -apple-system,
+          "Segoe UI",
+          sans-serif;
+        user-select: none;
+        -webkit-user-select: none;
+        touch-action: manipulation;
+      }
+      header {
+        position: sticky;
+        top: env(safe-area-inset-top, 0px);
+        background: var(--bg);
+        padding: 10px 12px;
+        border-bottom: 1px solid var(--line);
+        z-index: 5;
+      }
+      .row {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+        margin-bottom: 6px;
+      }
+      .row:last-child {
+        margin-bottom: 0;
+      }
+      button {
+        font: inherit;
+        color: var(--fg);
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 10px 12px;
+        min-height: 44px;
+        cursor: pointer;
+      }
+      button.sel {
+        background: var(--acc);
+        color: var(--onfg);
+        border-color: var(--acc);
+      }
+      .wave {
+        flex: 1;
+        min-width: 70px;
+      }
+      .seg {
+        flex: 1;
+      }
+      #status {
+        font-size: 12px;
+        color: var(--mut);
+        padding: 2px 2px 0;
+      }
+      main {
+        padding: 12px;
+      }
+      #notes.grid {
+        display: grid;
+        grid-template-columns: repeat(4, 1fr);
+        gap: 10px;
+      }
+      #notes.list {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .note {
+        font-size: 22px;
+        font-weight: 600;
+        min-height: 84px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        flex-direction: column;
+        gap: 2px;
+      }
+      #notes.list .note {
+        flex-direction: row;
+        justify-content: space-between;
+        min-height: 60px;
+        padding: 0 18px;
+      }
+      .note small {
+        font-size: 11px;
+        font-weight: 400;
+        opacity: 0.65;
+      }
+      .note.on {
+        background: var(--on);
+        color: var(--onfg);
+        border-color: var(--on);
+      }
+      .gazed {
+        outline: 3px solid var(--acc);
+        outline-offset: 2px;
+      }
+      #cursor {
+        position: fixed;
+        left: 0;
+        top: 0;
+        width: 44px;
+        height: 44px;
+        margin: -22px 0 0 -22px;
+        border-radius: 50%;
+        border: 3px solid var(--acc);
+        background: rgba(47, 111, 237, 0.12);
+        pointer-events: none;
+        z-index: 50;
+        display: none;
+        transition: background 0.1s;
+      }
+      #cursor.closing {
+        background: rgba(232, 89, 12, 0.45);
+        border-color: var(--on);
+      }
+      #cal {
+        position: fixed;
+        inset: 0;
+        background: var(--bg);
+        z-index: 40;
+        display: none;
+      }
+      #cal p {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: calc(env(safe-area-inset-top, 0px) + 30%);
+        text-align: center;
+        color: var(--mut);
+        padding: 0 24px;
+        margin: 0;
+      }
+      .dot {
+        position: absolute;
+        width: 44px;
+        height: 44px;
+        margin: -22px 0 0 -22px;
+        border-radius: 50%;
+        background: var(--acc);
+        color: var(--onfg);
+        font-weight: 700;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        opacity: 1;
+      }
+      .dot.done {
+        opacity: 0.15;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <div class="row" id="waves"></div>
+      <div class="row">
+        <button class="seg" id="vGrid">Grid</button>
+        <button class="seg" id="vList">List</button>
+        <button class="seg" id="tEdo">12-EDO</button>
+        <button class="seg" id="tJi">Just</button>
+      </div>
+      <div class="row">
+        <button class="seg" id="eye">👁 Start eye tracking</button
+        ><button class="seg" id="mode">Mode: Drift</button
+        ><button class="seg" id="recenter">Recenter</button>
+      </div>
+      <div id="status">
+        Tap notes to play. Start eye tracking to select by blinking (hold ~0.4
+        s).
+      </div>
+    </header>
+    <main><div id="notes" class="grid"></div></main>
+    <div id="cursor"></div>
+    <div id="cal">
+      <p id="calmsg">
+        Look at each dot and tap it 3 times. Keep your head fairly still.
+      </p>
+    </div>
 
-/* Calibration */
-function calibrate(){
-  return new Promise(res=>{
-    const cal=$("cal");cal.style.display="block";
-    cal.querySelectorAll(".dot").forEach(d=>d.remove());
-    const pts=[[10,12],[50,12],[90,12],[10,50],[50,50],[90,50],[10,88],[50,88],[90,88]];
-    let left=pts.length;
-    pts.forEach(([x,y])=>{
-      let n=3;const d=document.createElement("div");d.className="dot";d.textContent=n;
-      d.style.left=x+"%";d.style.top=y+"%";
-      d.addEventListener("click",()=>{n--;d.textContent=n;if(n<=0){d.classList.add("done");d.style.pointerEvents="none";if(--left===0){cal.style.display="none";res()}}});
-      cal.appendChild(d);
-    });
-  });
-}
+    <script src="https://cdn.jsdelivr.net/npm/webgazer@3.4.0/dist/webgazer.js"></script>
+    <script>
+      const NAMES = [
+        "C",
+        "C♯",
+        "D",
+        "D♯",
+        "E",
+        "F",
+        "F♯",
+        "G",
+        "G♯",
+        "A",
+        "A♯",
+        "B",
+      ];
+      const JI = [
+        1,
+        16 / 15,
+        9 / 8,
+        6 / 5,
+        5 / 4,
+        4 / 3,
+        45 / 32,
+        3 / 2,
+        8 / 5,
+        5 / 3,
+        9 / 5,
+        15 / 8,
+      ];
+      const C4 = 261.6256;
+      const ADSR = { a: 0.03, d: 0.12, s: 0.6, r: 0.3, peak: 0.22 };
+      let wave = "sine",
+        tuning = "edo",
+        ctx = null,
+        master = null;
+      const voices = new Map();
+      const $ = (id) => document.getElementById(id);
+      const status = (t) => ($("status").textContent = t);
 
-bind($("eye"),async()=>{
-  ensureAudio();
-  if(tracking){tracking=false;webgazer.pause();cur.style.display="none";$("eye").textContent="👁 Start eye tracking";$("eye").classList.remove("sel");status("Eye tracking off.");return}
-  if(typeof webgazer==="undefined"){status("Eye-tracking library failed to load. Touch still works.");return}
-  status("Starting camera…");
-  try{
-    webgazer.setRegression("ridge").setGazeListener(onGaze);
-    await webgazer.begin();
-    ["showVideoPreview","showFaceOverlay","showFaceFeedbackBox","showPredictionPoints"].forEach(f=>{try{webgazer[f](false)}catch(e){}});
-    try{webgazer.applyKalmanFilter(true)}catch(e){}
-    await calibrate();
-    tracking=true;cur.style.display="block";
-    $("eye").textContent="👁 Eye tracking on (tap to stop)";$("eye").classList.add("sel");
-    status("Look at a note and hold your eyes closed ~0.4 s to select it. Tapping also refines tracking.");
-    loop();
-  }catch(err){
-    status("Couldn’t start the camera: "+(err&&err.message?err.message:err)+". Touch still works.");
-  }
-});
-</script>
-</body>
+      function freq(i) {
+        return tuning === "edo" ? C4 * Math.pow(2, i / 12) : C4 * JI[i];
+      }
+      function ensureAudio() {
+        if (!ctx) {
+          ctx = new (window.AudioContext || window.webkitAudioContext)();
+          master = ctx.createGain();
+          master.gain.value = 0.9;
+          master.connect(ctx.destination);
+        }
+        if (ctx.state !== "running") ctx.resume();
+      }
+      function startNote(i) {
+        ensureAudio();
+        const t = ctx.currentTime,
+          o = ctx.createOscillator(),
+          g = ctx.createGain();
+        o.type = wave;
+        o.frequency.value = freq(i);
+        g.gain.setValueAtTime(0.0001, t);
+        g.gain.linearRampToValueAtTime(ADSR.peak, t + ADSR.a);
+        g.gain.setTargetAtTime(ADSR.peak * ADSR.s, t + ADSR.a, ADSR.d / 3);
+        o.connect(g);
+        g.connect(master);
+        o.start(t);
+        voices.set(i, { o, g });
+      }
+      function stopNote(i) {
+        const v = voices.get(i);
+        if (!v) return;
+        const t = ctx.currentTime;
+        try {
+          v.g.gain.cancelAndHoldAtTime(t);
+        } catch (e) {
+          v.g.gain.cancelScheduledValues(t);
+          v.g.gain.setValueAtTime(v.g.gain.value, t);
+        }
+        v.g.gain.setTargetAtTime(0, t, ADSR.r / 3);
+        v.o.stop(t + ADSR.r + 0.15);
+        voices.delete(i);
+      }
+      function toggle(i) {
+        voices.has(i) ? stopNote(i) : startNote(i);
+        document
+          .querySelector(`[data-note="${i}"]`)
+          .classList.toggle("on", voices.has(i));
+      }
+
+      /* UI build */
+      const acts = new WeakMap();
+      function bind(el, fn) {
+        acts.set(el, fn);
+        el.addEventListener("click", fn);
+      }
+      ["sine", "square", "triangle", "sawtooth"].forEach((w) => {
+        const b = document.createElement("button");
+        b.className = "wave";
+        b.dataset.wave = w;
+        b.textContent = w[0].toUpperCase() + w.slice(1);
+        bind(b, () => {
+          wave = w;
+          document
+            .querySelectorAll(".wave")
+            .forEach((x) => x.classList.toggle("sel", x === b));
+          voices.forEach((v) => (v.o.type = w));
+        });
+        $("waves").appendChild(b);
+      });
+      document.querySelector('[data-wave="sine"]').classList.add("sel");
+      function setView(v) {
+        $("notes").className = v;
+        $("vGrid").classList.toggle("sel", v === "grid");
+        $("vList").classList.toggle("sel", v === "list");
+      }
+      function setTuning(t) {
+        tuning = t;
+        $("tEdo").classList.toggle("sel", t === "edo");
+        $("tJi").classList.toggle("sel", t === "ji");
+        voices.forEach((v, i) =>
+          v.o.frequency.setTargetAtTime(freq(i), ctx.currentTime, 0.02),
+        );
+        renderNotes();
+      }
+      bind($("vGrid"), () => setView("grid"));
+      bind($("vList"), () => setView("list"));
+      bind($("tEdo"), () => setTuning("edo"));
+      bind($("tJi"), () => setTuning("ji"));
+      function renderNotes() {
+        const box = $("notes");
+        box.innerHTML = "";
+        NAMES.forEach((n, i) => {
+          const b = document.createElement("button");
+          b.className = "note" + (voices.has(i) ? " on" : "");
+          b.dataset.note = i;
+          b.innerHTML = `<span>${n}</span><small>${freq(i).toFixed(1)} Hz</small>`;
+          bind(b, () => toggle(i));
+          box.appendChild(b);
+        });
+      }
+      setView("grid");
+      setTuning("edo");
+
+      /* Gaze + blink */
+      const cur = $("cursor");
+      let gx = innerWidth / 2,
+        gy = innerHeight / 2,
+        hist = [],
+        tracking = false,
+        baseEAR = 0.3,
+        closedAt = null,
+        fired = false,
+        hover = null;
+      let rx = innerWidth / 2,
+        ry = innerHeight / 2,
+        nx = rx,
+        ny = ry,
+        mode = "drift",
+        lastT = 0,
+        squint = false;
+      const BLINK_MS = 400,
+        MAX_MS = 2000;
+
+      function targetAt(x, y) {
+        const el = document.elementFromPoint(x, y);
+        return el && el.closest("button");
+      }
+      function setHover(x, y) {
+        const t = targetAt(x, y);
+        if (t !== hover) {
+          hover && hover.classList.remove("gazed");
+          hover = t;
+          hover && hover.classList.add("gazed");
+        }
+      }
+      /* Drift mode: gaze offset from a neutral point acts like a joystick that moves the cursor.
+   Direct mode: cursor sits where you look (lightly smoothed). */
+      function onGaze(d) {
+        if (!d || closedAt !== null || squint) return;
+        rx += (d.x - rx) * 0.08;
+        ry += (d.y - ry) * 0.08; // heavy smoothing of raw gaze
+        if (mode === "direct") {
+          gx += (d.x - gx) * 0.2;
+          gy += (d.y - gy) * 0.2;
+        }
+      }
+      function step(now) {
+        const dt = Math.min(0.05, (now - lastT) / 1000 || 0);
+        lastT = now;
+        if (mode === "drift" && closedAt === null && !squint) {
+          const dx = rx - nx,
+            dy = ry - ny,
+            m = Math.hypot(dx, dy),
+            s = Math.min(innerWidth, innerHeight);
+          const dz = s * 0.1,
+            full = s * 0.45; // dead zone and full-speed distance
+          if (m > dz) {
+            const k = Math.min(1, (m - dz) / (full - dz)),
+              sp = k * k * 700 + k * 60;
+            gx += (dx / m) * sp * dt;
+            gy += (dy / m) * sp * dt;
+          }
+        }
+        gx = Math.max(0, Math.min(innerWidth, gx));
+        gy = Math.max(0, Math.min(innerHeight, gy));
+        hist.push({ t: now, x: gx, y: gy });
+        while (hist.length && now - hist[0].t > 800) hist.shift();
+        cur.style.transform = `translate(${gx}px,${gy}px)`;
+        setHover(gx, gy);
+      }
+      function recenter() {
+        status("Look at the middle of the screen…");
+        setTimeout(() => {
+          nx = rx;
+          ny = ry;
+          status(
+            mode === "drift"
+              ? "Look left/right/up/down to steer the cursor. Close your eyes ~0.4 s to select."
+              : "Cursor follows your gaze. Close your eyes ~0.4 s to select.",
+          );
+        }, 2000);
+      }
+      function dist(a, b) {
+        return Math.hypot(a[0] - b[0], a[1] - b[1]);
+      }
+      function ear(p) {
+        // MediaPipe/TF facemesh landmarks: left eye 33,133,159,145; right eye 362,263,386,374
+        const l = dist(p[159], p[145]) / dist(p[33], p[133]);
+        const r = dist(p[386], p[374]) / dist(p[362], p[263]);
+        return (l + r) / 2;
+      }
+      function loop() {
+        if (!tracking) return;
+        step(performance.now());
+        try {
+          const p = webgazer.getTracker().getPositions();
+          if (p && p.length > 380) {
+            const e = ear(p),
+              now = performance.now();
+            if (e > baseEAR * 0.75) baseEAR += (e - baseEAR) * 0.02; // adapt baseline while open
+            squint = e < baseEAR * 0.82;
+            const closed = e < baseEAR * 0.6;
+            if (closed && closedAt === null) {
+              closedAt = now;
+              fired = false;
+            }
+            if (closed && closedAt !== null) {
+              const held = now - closedAt;
+              cur.classList.add("closing");
+              if (!fired && held >= BLINK_MS && held <= MAX_MS) {
+                fired = true;
+                // use cursor position from just before the eyes closed
+                const ref = hist.filter((h) => h.t < closedAt - 100).pop() ||
+                  hist[0] || { x: gx, y: gy };
+                const t = targetAt(ref.x, ref.y);
+                if (t && acts.get(t)) {
+                  acts.get(t)();
+                  if (navigator.vibrate) navigator.vibrate(20);
+                }
+              }
+            }
+            if (!closed) {
+              closedAt = null;
+              cur.classList.remove("closing");
+            }
+          }
+        } catch (err) {}
+        requestAnimationFrame(loop);
+      }
+
+      /* Calibration */
+      function calibrate() {
+        return new Promise((res) => {
+          const cal = $("cal");
+          cal.style.display = "block";
+          cal.querySelectorAll(".dot").forEach((d) => d.remove());
+          const pts = [
+            [10, 12],
+            [50, 12],
+            [90, 12],
+            [10, 50],
+            [50, 50],
+            [90, 50],
+            [10, 88],
+            [50, 88],
+            [90, 88],
+          ];
+          let left = pts.length;
+          pts.forEach(([x, y]) => {
+            let n = 3;
+            const d = document.createElement("div");
+            d.className = "dot";
+            d.textContent = n;
+            d.style.left = x + "%";
+            d.style.top = y + "%";
+            d.addEventListener("click", () => {
+              n--;
+              d.textContent = n;
+              if (n <= 0) {
+                d.classList.add("done");
+                d.style.pointerEvents = "none";
+                if (--left === 0) {
+                  cal.style.display = "none";
+                  res();
+                }
+              }
+            });
+            cal.appendChild(d);
+          });
+        });
+      }
+
+      bind($("eye"), async () => {
+        ensureAudio();
+        if (tracking) {
+          tracking = false;
+          webgazer.pause();
+          cur.style.display = "none";
+          $("eye").textContent = "👁 Start eye tracking";
+          $("eye").classList.remove("sel");
+          status("Eye tracking off.");
+          return;
+        }
+        if (typeof webgazer === "undefined") {
+          status("Eye-tracking library failed to load. Touch still works.");
+          return;
+        }
+        status("Starting camera…");
+        try {
+          webgazer.setRegression("ridge").setGazeListener(onGaze);
+          await webgazer.begin();
+          [
+            "showVideoPreview",
+            "showFaceOverlay",
+            "showFaceFeedbackBox",
+            "showPredictionPoints",
+          ].forEach((f) => {
+            try {
+              webgazer[f](false);
+            } catch (e) {}
+          });
+          try {
+            webgazer.applyKalmanFilter(true);
+          } catch (e) {}
+          await calibrate();
+          tracking = true;
+          cur.style.display = "block";
+          $("eye").textContent = "👁 Eye tracking on (tap to stop)";
+          $("eye").classList.add("sel");
+          recenter();
+          loop();
+        } catch (err) {
+          status(
+            "Couldn’t start the camera: " +
+              (err && err.message ? err.message : err) +
+              ". Touch still works.",
+          );
+        }
+      });
+      bind($("recenter"), () => {
+        if (tracking) recenter();
+      });
+      bind($("mode"), () => {
+        mode = mode === "drift" ? "direct" : "drift";
+        $("mode").textContent =
+          "Mode: " + (mode === "drift" ? "Drift" : "Direct");
+        if (tracking) recenter();
+      });
+    </script>
+  </body>
 </html>
