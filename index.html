@@ -217,6 +217,10 @@
         ><button class="seg" id="mode">Mode: Drift</button
         ><button class="seg" id="recenter">Recenter</button>
       </div>
+      <div class="row">
+        <button class="seg" id="flipX">Head: flip L/R</button
+        ><button class="seg" id="flipY">Head: flip U/D</button>
+      </div>
       <div id="status">
         Tap notes to play. Start eye tracking to select by blinking (hold ~0.4
         s).
@@ -389,8 +393,14 @@
         mode = "drift",
         lastT = 0,
         squint = false;
-      const BLINK_MS = 400,
-        MAX_MS = 2000;
+      let hx = 0,
+        hy = 0,
+        nhx = 0,
+        nhy = 0,
+        flipX = -1,
+        flipY = 1; // head pose (smoothed) and neutral pose
+      let BLINK_MS = 400;
+      const MAX_MS = 2000;
 
       function targetAt(x, y) {
         const el = document.elementFromPoint(x, y);
@@ -405,7 +415,8 @@
         }
       }
       /* Drift mode: gaze offset from a neutral point acts like a joystick that moves the cursor.
-   Direct mode: cursor sits where you look (lightly smoothed). */
+   Direct mode: cursor sits where you look (lightly smoothed).
+   Head mode: head turn/tilt steers the cursor. */
       function onGaze(d) {
         if (!d || closedAt !== null || squint) return;
         rx += (d.x - rx) * 0.08;
@@ -415,9 +426,21 @@
           gy += (d.y - gy) * 0.2;
         }
       }
+      function axisSpeed(v) {
+        const a = Math.abs(v),
+          dz = 0.15;
+        if (a < dz) return 0;
+        const k = Math.min(1, (a - dz) / (1 - dz));
+        return Math.sign(v) * (k * k * 800 + k * 80);
+      }
       function step(now) {
         const dt = Math.min(0.05, (now - lastT) / 1000 || 0);
         lastT = now;
+        if (mode === "head" && closedAt === null && !squint) {
+          // head turn/tilt steers the cursor
+          gx += axisSpeed(((hx - nhx) / 0.2) * flipX) * dt;
+          gy += axisSpeed(((hy - nhy) / 0.12) * flipY) * dt;
+        }
         if (mode === "drift" && closedAt === null && !squint) {
           const dx = rx - nx,
             dy = ry - ny,
@@ -440,14 +463,22 @@
         setHover(gx, gy);
       }
       function recenter() {
-        status("Look at the middle of the screen…");
+        status(
+          mode === "head"
+            ? "Face the screen straight on and hold still…"
+            : "Look at the middle of the screen…",
+        );
         setTimeout(() => {
           nx = rx;
           ny = ry;
+          nhx = hx;
+          nhy = hy;
           status(
-            mode === "drift"
-              ? "Look left/right/up/down to steer the cursor. Close your eyes ~0.4 s to select."
-              : "Cursor follows your gaze. Close your eyes ~0.4 s to select.",
+            mode === "head"
+              ? "Turn/tilt your head to steer the cursor. Close your eyes ~0.3 s to select. Use the flip buttons if a direction is reversed."
+              : mode === "drift"
+                ? "Look left/right/up/down to steer the cursor. Close your eyes ~0.4 s to select."
+                : "Cursor follows your gaze. Close your eyes ~0.4 s to select.",
           );
         }, 2000);
       }
@@ -468,6 +499,15 @@
           if (p && p.length > 380) {
             const e = ear(p),
               now = performance.now();
+            {
+              const wd = dist(p[33], p[263]),
+                mx = (p[33][0] + p[263][0]) / 2,
+                my = (p[33][1] + p[263][1]) / 2;
+              const yaw = (p[1][0] - mx) / wd,
+                pit = (p[1][1] - my) / Math.max(1, p[152][1] - my);
+              hx += (yaw - hx) * 0.2;
+              hy += (pit - hy) * 0.2;
+            }
             if (e > baseEAR * 0.75) baseEAR += (e - baseEAR) * 0.02; // adapt baseline while open
             squint = e < baseEAR * 0.82;
             const closed = e < baseEAR * 0.6;
@@ -573,7 +613,10 @@
           try {
             webgazer.applyKalmanFilter(true);
           } catch (e) {}
-          await calibrate();
+          if (mode !== "head") {
+            await calibrate();
+            calibrated = true;
+          }
           tracking = true;
           cur.style.display = "block";
           $("eye").textContent = "👁 Eye tracking on (tap to stop)";
@@ -591,11 +634,26 @@
       bind($("recenter"), () => {
         if (tracking) recenter();
       });
-      bind($("mode"), () => {
-        mode = mode === "drift" ? "direct" : "drift";
-        $("mode").textContent =
-          "Mode: " + (mode === "drift" ? "Drift" : "Direct");
-        if (tracking) recenter();
+      const MODES = ["drift", "direct", "head"],
+        LABEL = { drift: "Drift", direct: "Direct", head: "Head" };
+      let calibrated = false;
+      bind($("mode"), async () => {
+        mode = MODES[(MODES.indexOf(mode) + 1) % 3];
+        $("mode").textContent = "Mode: " + LABEL[mode];
+        BLINK_MS = mode === "head" ? 300 : 400;
+        if (tracking) {
+          if (mode !== "head" && !calibrated) {
+            await calibrate();
+            calibrated = true;
+          }
+          recenter();
+        }
+      });
+      bind($("flipX"), () => {
+        flipX = -flipX;
+      });
+      bind($("flipY"), () => {
+        flipY = -flipY;
       });
     </script>
   </body>
