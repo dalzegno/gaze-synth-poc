@@ -294,9 +294,16 @@
         style="grid-template-columns: 1fr 1fr; margin-bottom: 6px"
       ></div>
       <label for="sens"
-        >Cursor sensitivity: <span id="sensVal">1.00×</span></label
+        >Cursor sensitivity: <span id="sensVal">0.50×</span></label
       >
-      <input type="range" id="sens" min="0.5" max="2.5" step="0.05" value="1" />
+      <input
+        type="range"
+        id="sens"
+        min="0.25"
+        max="2.5"
+        step="0.05"
+        value="0.5"
+      />
       <label>Note layout</label>
       <div class="g3" style="grid-template-columns: 1fr 1fr">
         <button id="vGrid">Grid</button><button id="vList">List</button>
@@ -520,12 +527,13 @@
 
       /* Head steering + mouth selection */
       const cur = $("cursor");
-      let sens = 1; // cursor sensitivity multiplier (settings slider)
+      let sens = 0.5; // cursor sensitivity multiplier (settings slider)
       let gx = innerWidth / 2,
         gy = innerHeight / 2,
         tracking = false,
         hover = null,
-        lastT = 0;
+        lastT = 0,
+        hist = [];
       let hx = 0,
         hy = 0,
         nhx = 0,
@@ -561,13 +569,17 @@
       function step(now) {
         const dt = Math.min(0.05, (now - lastT) / 1000 || 0);
         lastT = now;
-        if (!opening && openAt === null) {
-          // cursor holds still while the mouth is opening
+        if (openAt === null) {
+          // cursor holds still once the mouth is open
           gx += axisSpeed(((hx - nhx) / 0.2) * flipX * sens) * dt;
-          gy += axisSpeed(((hy - nhy) / 0.18) * flipY * sens) * dt;
+          let vy = axisSpeed(((hy - nhy) / 0.18) * flipY * sens);
+          if (vy < 0) vy *= 1.5; // tilting the head up is harder than down, so boost upward speed
+          gy += vy * dt;
         }
         gx = Math.max(0, Math.min(innerWidth, gx));
         gy = Math.max(0, Math.min(innerHeight, gy));
+        hist.push({ t: now, x: gx, y: gy });
+        while (hist.length && now - hist[0].t > 1000) hist.shift();
         cur.style.transform = `translate(${gx}px,${gy}px)`;
         setHover(gx, gy);
       }
@@ -607,7 +619,6 @@
             if (mb === null) mb = mar;
             if (mar < mb + 0.08) mb += (mar - mb) * 0.05; // closed-mouth baseline adapts automatically
             const d = mar - mb;
-            opening = d > 0.05;
             const open = d > OPEN_DELTA;
             $("dbg").textContent =
               `mouth: ${d.toFixed(2)} (selects above ${OPEN_DELTA})`;
@@ -618,7 +629,10 @@
             }
             if (open && !fired && now - openAt >= HOLD_MS) {
               fired = true;
-              const t = targetAt(gx, gy);
+              const ref = [...hist]
+                .reverse()
+                .find((h) => h.t <= openAt - 120) || { x: gx, y: gy }; // cursor position just before the mouth opened
+              const t = targetAt(ref.x, ref.y);
               if (t && acts.get(t)) {
                 acts.get(t)();
                 if (navigator.vibrate) navigator.vibrate(20);
