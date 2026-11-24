@@ -101,12 +101,6 @@
         font-size: 20px;
         flex: none;
       }
-      #scaleLabel {
-        flex: 1;
-        text-align: center;
-        font-size: 13px;
-        color: var(--mut);
-      }
       .wave {
         flex: 1;
         min-width: 70px;
@@ -260,25 +254,21 @@
   <body>
     <header>
       <div class="row top">
-        <button id="scaleBtn" aria-label="Scale">🎼</button>
-        <div id="scaleLabel"></div>
-        <button id="gear" aria-label="Settings">⚙️</button>
-      </div>
-      <div class="row" id="waves"></div>
-      <div class="row">
-        <button class="seg" id="track">Start head tracking</button>
-        <button class="seg" id="recenter">Recenter</button>
+        <button id="scaleBtn" aria-label="Scale">🎼</button
+        ><button class="seg" id="track">Start tracking</button
+        ><button class="seg" id="recenter">Recenter</button
+        ><button id="gear" aria-label="Settings">⚙️</button>
       </div>
       <div id="status">
-        Tap notes to play. Start head tracking to steer with your head and
-        select by opening your mouth.
+        Tap notes to play. For hands-free control, open ⚙️ settings and start
+        tracking.
       </div>
       <div id="dbg"></div>
     </header>
     <main><div id="notes" class="grid"></div></main>
 
     <div id="scalePanel" class="panel">
-      <h3>Scale</h3>
+      <h3 id="scaleLabel">Scale</h3>
       <label>Tuning</label>
       <div class="g3" id="tunBtns"></div>
       <label>Reference A (Hz)</label>
@@ -297,6 +287,12 @@
 
     <div id="settings" class="panel">
       <h3>Settings</h3>
+      <label>Waveform</label>
+      <div
+        class="g3"
+        id="waves"
+        style="grid-template-columns: 1fr 1fr; margin-bottom: 6px"
+      ></div>
       <label for="sens"
         >Cursor sensitivity: <span id="sensVal">1.00×</span></label
       >
@@ -640,7 +636,7 @@
           tracking = false;
           webgazer.pause();
           cur.style.display = "none";
-          $("track").textContent = "Start head tracking";
+          $("track").textContent = "Start tracking";
           $("track").classList.remove("sel");
           status("Head tracking off.");
           return;
@@ -664,8 +660,9 @@
           });
           tracking = true;
           cur.style.display = "block";
-          $("track").textContent = "Head tracking on (tap to stop)";
+          $("track").textContent = "Stop tracking";
           $("track").classList.add("sel");
+          $("settings").classList.remove("open");
           recenter();
           loop();
         } catch (err) {
