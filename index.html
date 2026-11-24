@@ -92,7 +92,50 @@
       }
       .wave {
         flex: 1;
-        min-width: 70px;
+        min-width: 56px;
+      }
+      #waves {
+        display: flex;
+        gap: 6px;
+        flex: 1;
+        flex-wrap: wrap;
+      }
+      #gear {
+        width: 44px;
+        padding: 0;
+        font-size: 20px;
+        flex: none;
+      }
+      #settings {
+        position: fixed;
+        top: calc(env(safe-area-inset-top, 0px) + 62px);
+        right: 12px;
+        width: min(320px, calc(100vw - 24px));
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 16px;
+        padding: 14px;
+        z-index: 60;
+        display: none;
+        box-shadow: 0 8px 28px rgba(0, 0, 0, 0.25);
+      }
+      #settings.open {
+        display: block;
+      }
+      #settings h3 {
+        margin: 0 0 10px;
+        font-size: 14px;
+      }
+      #settings label {
+        display: block;
+        font-size: 13px;
+        color: var(--mut);
+        margin: 4px 0 6px;
+      }
+      #sens {
+        width: 100%;
+        margin: 0 0 12px;
+        min-height: 32px;
       }
       .seg {
         flex: 1;
@@ -173,18 +216,17 @@
   </head>
   <body>
     <header>
-      <div class="row" id="waves"></div>
       <div class="row">
-        <button class="seg" id="vGrid">Grid</button>
-        <button class="seg" id="vList">List</button>
+        <div id="waves"></div>
+        <button id="gear" aria-label="Settings">⚙️</button>
+      </div>
+      <div class="row">
         <button class="seg" id="tEdo">12-EDO</button>
         <button class="seg" id="tJi">Just</button>
       </div>
       <div class="row">
         <button class="seg" id="track">Start head tracking</button>
         <button class="seg" id="recenter">Recenter</button>
-        <button class="seg" id="flipX">Flip L/R</button>
-        <button class="seg" id="flipY">Flip U/D</button>
       </div>
       <div id="status">
         Tap notes to play. Start head tracking to steer with your head and
@@ -193,6 +235,23 @@
       <div id="dbg"></div>
     </header>
     <main><div id="notes" class="grid"></div></main>
+    <div id="settings">
+      <h3>Settings</h3>
+      <label for="sens"
+        >Cursor sensitivity: <span id="sensVal">1.00×</span></label
+      >
+      <input type="range" id="sens" min="0.5" max="2.5" step="0.05" value="1" />
+      <label>Note layout</label>
+      <div class="row">
+        <button class="seg" id="vGrid">Grid</button
+        ><button class="seg" id="vList">List</button>
+      </div>
+      <label>Reverse head direction</label>
+      <div class="row">
+        <button class="seg" id="flipX">Flip L/R</button
+        ><button class="seg" id="flipY">Flip U/D</button>
+      </div>
+    </div>
     <div id="cursor"></div>
 
     <script src="https://cdn.jsdelivr.net/npm/webgazer@3.4.0/dist/webgazer.js"></script>
@@ -340,6 +399,7 @@
 
       /* Head steering + mouth selection */
       const cur = $("cursor");
+      let sens = 1; // cursor sensitivity multiplier (settings slider)
       let gx = innerWidth / 2,
         gy = innerHeight / 2,
         hist = [],
@@ -383,8 +443,8 @@
         lastT = now;
         if (!opening && openAt === null) {
           // cursor holds still while the mouth is opening
-          gx += axisSpeed(((hx - nhx) / 0.2) * flipX) * dt;
-          gy += axisSpeed(((hy - nhy) / 0.18) * flipY) * dt;
+          gx += axisSpeed(((hx - nhx) / 0.2) * flipX * sens) * dt;
+          gy += axisSpeed(((hy - nhy) / 0.18) * flipY * sens) * dt;
         }
         gx = Math.max(0, Math.min(innerWidth, gx));
         gy = Math.max(0, Math.min(innerHeight, gy));
@@ -500,6 +560,22 @@
       });
       bind($("flipY"), () => {
         flipY = -flipY;
+      });
+
+      /* Settings panel */
+      const panel = $("settings");
+      bind($("gear"), () => panel.classList.toggle("open"));
+      document.addEventListener("click", (e) => {
+        if (
+          panel.classList.contains("open") &&
+          !panel.contains(e.target) &&
+          !$("gear").contains(e.target)
+        )
+          panel.classList.remove("open");
+      });
+      $("sens").addEventListener("input", (e) => {
+        sens = parseFloat(e.target.value);
+        $("sensVal").textContent = sens.toFixed(2) + "×";
       });
     </script>
   </body>
