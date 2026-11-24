@@ -225,6 +225,10 @@
         Tap notes to play. Start eye tracking to select by blinking (hold ~0.4
         s).
       </div>
+      <div
+        id="dbg"
+        style="font-size: 11px; color: var(--mut); padding: 2px"
+      ></div>
     </header>
     <main><div id="notes" class="grid"></div></main>
     <div id="cursor"></div>
@@ -401,6 +405,8 @@
         flipY = 1; // head pose (smoothed) and neutral pose
       let BLINK_MS = 400;
       const MAX_MS = 2000;
+      let bL = null,
+        bR = null; // per-eye "open" baselines
 
       function targetAt(x, y) {
         const el = document.elementFromPoint(x, y);
@@ -485,19 +491,23 @@
       function dist(a, b) {
         return Math.hypot(a[0] - b[0], a[1] - b[1]);
       }
-      function ear(p) {
-        // MediaPipe/TF facemesh landmarks: left eye 33,133,159,145; right eye 362,263,386,374
-        const l = dist(p[159], p[145]) / dist(p[33], p[133]);
-        const r = dist(p[386], p[374]) / dist(p[362], p[263]);
-        return (l + r) / 2;
+      function ears(p) {
+        // facemesh landmarks: left eye 33,133,159,145; right eye 362,263,386,374
+        return [
+          dist(p[159], p[145]) / dist(p[33], p[133]),
+          dist(p[386], p[374]) / dist(p[362], p[263]),
+        ];
       }
       function loop() {
         if (!tracking) return;
         step(performance.now());
         try {
           const p = webgazer.getTracker().getPositions();
+          if (!p || p.length <= 380)
+            $("dbg").textContent =
+              "No face landmarks (" + (p ? p.length : 0) + ")";
           if (p && p.length > 380) {
-            const e = ear(p),
+            const [eL, eR] = ears(p),
               now = performance.now();
             {
               const wd = dist(p[33], p[263]),
@@ -508,9 +518,19 @@
               hx += (yaw - hx) * 0.2;
               hy += (pit - hy) * 0.2;
             }
-            if (e > baseEAR * 0.75) baseEAR += (e - baseEAR) * 0.02; // adapt baseline while open
-            squint = e < baseEAR * 0.82;
-            const closed = e < baseEAR * 0.6;
+            if (bL === null) {
+              bL = eL;
+              bR = eR;
+            }
+            bL = eL > bL ? bL + (eL - bL) * 0.05 : bL - (bL - eL) * 0.003; // open baseline: rises fast, falls slowly
+            bR = eR > bR ? bR + (eR - bR) * 0.05 : bR - (bR - eR) * 0.003;
+            const rL = eL / bL,
+              rR = eR / bR,
+              r = Math.min(rL, rR); // 1 = fully open; either eye counts
+            squint = r < 0.8;
+            const closed = r < 0.6;
+            $("dbg").textContent =
+              `eye open: L ${(rL * 100) | 0}%  R ${(rR * 100) | 0}%  (selects below 60%)`;
             if (closed && closedAt === null) {
               closedAt = now;
               fired = false;
